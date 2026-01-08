@@ -4,3 +4,6 @@ https://raw.githubusercontent.com/parvinxs/Submahsanetxsparvin/refs/heads/main/S
 https://raw.githubusercontent.com/Mosifree/-FREE2CONFIG/refs/heads/main/Clash_Reality
 https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity
 https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/server.txt
+https://raw.githubusercontent.com/pawdroid/Free-servers/main/sub
+https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt
+https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt
