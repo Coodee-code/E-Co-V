@@ -1,0 +1,36 @@
+name: E-Config Collector
+
+on:
+  schedule:
+    - cron: '0 6,18 * * *' # اجرا در ساعت 6 صبح و 6 عصر (به وقت جهانی)
+  workflow_dispatch: # دکمه اجرای دستی هم داشته باشه
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: دریافت کدها
+      uses: actions/checkout@v3
+
+    - name: نصب پایتون
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: نصب پیش‌نیازها
+      run: pip install requests
+
+    - name: اجرای اسکریپت جمع‌آوری
+      run: python main.py
+
+    - name: ذخیره تغییرات در گیت‌هاب
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        git add sub.txt sub_b64.txt
+        git commit -m "Update E-Configs" || echo "No changes to commit"
+        git push
