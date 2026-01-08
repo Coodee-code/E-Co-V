@@ -8,37 +8,50 @@ SOURCE_FILE = 'sources.txt'
 OUTPUT_FILE = 'sub.txt'
 OUTPUT_B64 = 'sub_b64.txt'
 
-# هدر برای اینکه گیت‌هاب مسدود نکنه
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
 def robust_decode(text):
-    """
-    تلاش سنگین برای دیکد کردن Base64 حتی اگر خراب باشه
-    """
     if not text: return ""
     text = text.strip()
-    
-    # اگر متن خودش کانفیگ خام هست، دست نزن
-    if text.startswith('vless://') or text.startswith('vmess://') or text.startswith('trojan://'):
+    if text.startswith('vless://') or text.startswith('vmess://') or text.startswith('trojan://') or text.startswith('ss://'):
         return text
-
-    # تلاش برای دیکد
     try:
-        # اضافه کردن پدینگ تا جایی که ضریب 4 بشه
         missing_padding = len(text) % 4
         if missing_padding:
             text += '=' * (4 - missing_padding)
-        
-        decoded_bytes = base64.b64decode(text, validate=False)
-        return decoded_bytes.decode('utf-8', errors='ignore')
+        return base64.b64decode(text, validate=False).decode('utf-8', errors='ignore')
     except:
-        return text # اگه نشد، خود متن رو برگردون شاید خام باشه
+        return text
+
+def rename_vmess(link, new_name):
+    """
+    تابع مخصوص برای تغییر نام کانفیگ‌های VMess
+    """
+    try:
+        # حذف vmess://
+        b64_part = link[8:]
+        # دیکد کردن کانفیگ
+        missing_padding = len(b64_part) % 4
+        if missing_padding:
+            b64_part += '=' * (4 - missing_padding)
+        
+        json_str = base64.b64decode(b64_part).decode('utf-8')
+        config = json.loads(json_str)
+        
+        # تغییر نام (ps)
+        config['ps'] = new_name
+        
+        # دوباره انکد کردن
+        new_json = json.dumps(config)
+        new_b64 = base64.b64encode(new_json.encode('utf-8')).decode('utf-8')
+        return f"vmess://{new_b64}"
+    except:
+        return link # اگه خراب بود دست نزن
 
 def fetch_and_parse():
     if not os.path.exists(SOURCE_FILE):
-        print("❌ فایل sources.txt پیدا نشد!")
         return []
 
     with open(SOURCE_FILE, 'r') as f:
@@ -53,54 +66,51 @@ def fetch_and_parse():
             response = requests.get(url, headers=HEADERS, timeout=15)
             content = response.text.strip()
             
-            # مرحله 1: دیکد اولیه
             decoded_content = robust_decode(content)
             
-            # مرحله 2: پیدا کردن کانفیگ‌ها با Regex
-            # این الگو تمام پروتکل‌ها رو میکشه بیرون
-            found = re.findall(r'(vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*', decoded_content)
+            # --- فیکس اصلی اینجاست (?: اضافه شد که گروه کپچر نشه) ---
+            pattern = r'(?:vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*'
             
-            # اگر با دیکد چیزی پیدا نشد، شاید فایل خام بوده، روی خود کانتنت اصلی تست میکنیم
+            found = re.findall(pattern, decoded_content)
             if not found:
-                found = re.findall(r'(vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*', content)
+                found = re.findall(pattern, content)
 
             if found:
                 collected_configs.extend(found)
                 print(f"   ✅ {len(found)} کانفیگ پیدا شد.")
             else:
-                print("   ⚠️ کانفیگی در این لینک پیدا نشد (شاید فرمت ناشناخته).")
+                print("   ⚠️ فرمت لینک شناسایی نشد (احتمالا YAML یا Clash است).")
 
         except Exception as e:
             print(f"   ❌ خطا: {e}")
 
-    # حذف تکراری‌ها
     return list(set(collected_configs))
 
 def rename_configs(configs):
     renamed_list = []
     counter = 1
     
+    print(f"\n🔄 در حال تغییر نام {len(configs)} کانفیگ...")
+    
     for conf in configs:
         try:
-            # تشخیص پروتکل
-            protocol = conf.split("://")[0]
-            body = conf.split("://")[1]
-            
-            new_conf = conf # پیش‌فرض
             new_name = f"E-Config-{counter}"
-
-            if protocol in ['vless', 'trojan', 'ss']:
-                # برای این پروتکل‌ها، هر چی بعد از # هست رو پاک میکنیم و اسم جدید میذاریم
-                if '#' in body:
-                    clean_body = body.split('#')[0]
-                    new_conf = f"{protocol}://{clean_body}#{new_name}"
+            
+            if conf.startswith("vmess://"):
+                # هندل کردن VMess
+                new_conf = rename_vmess(conf, new_name)
+                renamed_list.append(new_conf)
+                
+            elif conf.startswith("ss://") or conf.startswith("vless://") or conf.startswith("trojan://"):
+                # هندل کردن بقیه
+                if '#' in conf:
+                    base_part = conf.split('#')[0]
+                    renamed_list.append(f"{base_part}#{new_name}")
                 else:
-                    new_conf = f"{conf}#{new_name}"
-            
-            # نکته: vmess رو تغییر نمیدیم چون ساختار JSON داره و ممکنه خراب شه
-            # مگر اینکه بخوایم دیکد و انکد کنیم که پیچیده‌ست.
-            
-            renamed_list.append(new_conf)
+                    renamed_list.append(f"{conf}#{new_name}")
+            else:
+                renamed_list.append(conf)
+                
             counter += 1
         except:
             renamed_list.append(conf)
@@ -112,18 +122,15 @@ def save_to_file(configs):
         print("❌ هیچ کانفیگی جمع نشد!")
         return
 
-    # ذخیره فایل متنی
     final_text = '\n'.join(configs)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(final_text)
 
-    # ذخیره فایل Base64 (برای ایمپورت راحت‌تر)
     encoded_b64 = base64.b64encode(final_text.encode('utf-8')).decode('utf-8')
     with open(OUTPUT_B64, 'w', encoding='utf-8') as f:
         f.write(encoded_b64)
 
-    print(f"\n🎉 تمام! {len(configs)} کانفیگ جمع‌آوری و ذخیره شد.")
-    print(f"📂 فایل‌ها: {OUTPUT_FILE} و {OUTPUT_B64}")
+    print(f"\n🎉 تمام! {len(configs)} کانفیگ با نام E-Config ذخیره شد.")
 
 if __name__ == "__main__":
     raw_configs = fetch_and_parse()
