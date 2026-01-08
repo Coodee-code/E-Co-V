@@ -3,15 +3,15 @@ import base64
 import re
 import os
 import json
+# random رو حذف کردم چون دیگه لازم نیست
 
 SOURCE_FILE = 'sources.txt'
 OUTPUT_FILE = 'sub.txt'
 OUTPUT_B64 = 'sub_b64.txt'
 
-# --- تنظیمات نمایشی (اینجا رو می‌تونی عوض کنی) ---
-APP_TITLE = "E-Config VIP"  # اسمی که بالای برنامه مینویسه
-APP_URL = "https://github.com/username/repo" # لینک پشتیبانی (الکی هم باشه مشکلی نیست)
-TOTAL_TRAFFIC = 10737418240000000 # 10 پتابایت (بی‌نهایت)
+# --- تنظیمات ---
+APP_TITLE = "E-Config FULL"
+TOTAL_TRAFFIC = 10737418240000000
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -30,117 +30,121 @@ def robust_decode(text):
     except:
         return text
 
+def get_unique_fingerprint(config):
+    """
+    اثر انگشت برای شناسایی تکراری‌ها (آی‌پی + پورت)
+    """
+    try:
+        protocol = config.split("://")[0]
+        
+        if protocol == "vmess":
+            b64_part = config[8:]
+            pad = len(b64_part) % 4
+            if pad: b64_part += '=' * (4 - pad)
+            data = json.loads(base64.b64decode(b64_part).decode('utf-8'))
+            return f"vmess_{data['add']}_{data['port']}"
+            
+        elif protocol in ["vless", "trojan"]:
+            # فرمت: vless://uuid@ip:port?query...
+            main_part = config.split("@")[1].split("?")[0].split("#")[0]
+            return f"{protocol}_{main_part}"
+            
+        elif protocol == "ss":
+            if '@' in config:
+                server_part = config.split('@')[1].split("#")[0]
+                return f"ss_{server_part}"
+                
+        return config 
+    except:
+        return config
+
 def rename_vmess(link, new_name):
     try:
         b64_part = link[8:]
-        missing_padding = len(b64_part) % 4
-        if missing_padding:
-            b64_part += '=' * (4 - missing_padding)
-        
-        json_str = base64.b64decode(b64_part).decode('utf-8')
-        config = json.loads(json_str)
+        pad = len(b64_part) % 4
+        if pad: b64_part += '=' * (4 - pad)
+        config = json.loads(base64.b64decode(b64_part).decode('utf-8'))
         config['ps'] = new_name
-        
         new_json = json.dumps(config)
-        new_b64 = base64.b64encode(new_json.encode('utf-8')).decode('utf-8')
-        return f"vmess://{new_b64}"
+        return f"vmess://{base64.b64encode(new_json.encode('utf-8')).decode('utf-8')}"
     except:
         return link
 
 def fetch_and_parse():
-    if not os.path.exists(SOURCE_FILE):
-        return []
-
+    if not os.path.exists(SOURCE_FILE): return []
     with open(SOURCE_FILE, 'r') as f:
         urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
-    collected_configs = []
-    print(f"🔥 شروع استخراج از {len(urls)} منبع...")
+    raw_configs = []
+    print(f"🔥 شروع جمع‌آوری...")
 
     for url in urls:
         try:
-            print(f"⚡ در حال دریافت: {url}")
-            response = requests.get(url, headers=HEADERS, timeout=15)
-            content = response.text.strip()
-            decoded_content = robust_decode(content)
+            print(f"⚡ دریافت: {url}")
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            content = robust_decode(resp.text.strip())
             
             pattern = r'(?:vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*'
-            found = re.findall(pattern, decoded_content)
-            if not found:
-                found = re.findall(pattern, content)
+            found = re.findall(pattern, content)
+            if not found: found = re.findall(pattern, resp.text.strip())
+            
+            if found: raw_configs.extend(found)
+        except: pass
 
-            if found:
-                collected_configs.extend(found)
-                print(f"   ✅ {len(found)} کانفیگ پیدا شد.")
-            else:
-                print("   ⚠️ فرمت لینک شناسایی نشد.")
+    return list(set(raw_configs))
 
-        except Exception as e:
-            print(f"   ❌ خطا: {e}")
+def process_configs(configs):
+    unique_pool = {}
+    
+    print(f"\n🧹 تعداد کل خام: {len(configs)}")
 
-    return list(set(collected_configs))
+    # 1. فقط حذف تکراری‌ها
+    for conf in configs:
+        fingerprint = get_unique_fingerprint(conf)
+        
+        # اگر کلید تکراری نبود، اضافه کن
+        if fingerprint not in unique_pool:
+            unique_pool[fingerprint] = conf
 
-def rename_configs(configs):
+    # لیست نهایی = همه کانفیگ‌های یکتا (بدون هیچ فیلتر دیگه‌ای)
+    final_list = list(unique_pool.values())
+    print(f"✅ تعداد نهایی (یکتا): {len(final_list)}")
+
+    # 2. تغییر نام همه
     renamed_list = []
     counter = 1
-    print(f"\n🔄 در حال تغییر نام {len(configs)} کانفیگ...")
-    for conf in configs:
-        try:
-            new_name = f"E-Config-{counter}"
-            if conf.startswith("vmess://"):
-                new_conf = rename_vmess(conf, new_name)
-                renamed_list.append(new_conf)
-            elif conf.startswith("ss://") or conf.startswith("vless://") or conf.startswith("trojan://"):
-                if '#' in conf:
-                    base_part = conf.split('#')[0]
-                    renamed_list.append(f"{base_part}#{new_name}")
-                else:
-                    renamed_list.append(f"{conf}#{new_name}")
-            else:
-                renamed_list.append(conf)
-            counter += 1
-        except:
-            renamed_list.append(conf)
+    for conf in final_list:
+        name = f"E-Config-{counter}"
+        if conf.startswith("vmess://"):
+            renamed_list.append(rename_vmess(conf, name))
+        elif '#' in conf:
+            renamed_list.append(f"{conf.split('#')[0]}#{name}")
+        else:
+            renamed_list.append(f"{conf}#{name}")
+        counter += 1
+
     return renamed_list
 
 def save_to_file(configs):
-    if not configs:
-        print("❌ هیچ کانفیگی جمع نشد!")
-        return
+    if not configs: return
 
-    # --- قسمت جادویی: ساخت هدرهای اطلاعاتی ---
-    
-    # 1. انکد کردن اسم پروفایل به Base64 (الزامی برای هیدیفای)
     title_b64 = base64.b64encode(APP_TITLE.encode('utf-8')).decode('utf-8')
-    
-    # 2. ساخت متن هدر
     header_info = [
         f"#profile-title: base64:{title_b64}",
         f"#subscription-userinfo: upload=0; download=0; total={TOTAL_TRAFFIC}; expire=0",
         "#profile-update-interval: 1",
-        f"#support-url: {APP_URL}",
-        f"#profile-web-page-url: {APP_URL}",
-        "" # یک خط فاصله خالی
+        ""
     ]
     
-    # 3. ترکیب هدرها و کانفیگ‌ها
-    final_content_list = header_info + configs
-    final_text = '\n'.join(final_content_list)
-
-    # 4. ذخیره فایل متنی (برای کلاینت‌هایی که متن ساده می‌خونن)
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write(final_text)
-
-    # 5. ذخیره فایل Base64 (استاندارد اصلی)
-    # نکته مهم: کل متن (شامل هدرها و کانفیگ‌ها) با هم بیس۶۴ میشن
+    final_text = '\n'.join(header_info + configs)
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f: f.write(final_text)
+    
     encoded_b64 = base64.b64encode(final_text.encode('utf-8')).decode('utf-8')
-    with open(OUTPUT_B64, 'w', encoding='utf-8') as f:
-        f.write(encoded_b64)
+    with open(OUTPUT_B64, 'w', encoding='utf-8') as f: f.write(encoded_b64)
 
-    print(f"\n🎉 تمام! {len(configs)} کانفیگ ذخیره شد.")
-    print(f"💎 اطلاعات حجم نامحدود و نام '{APP_TITLE}' اضافه شد.")
+    print(f"\n🎉 فایل ذخیره شد. تعداد کل: {len(configs)}")
 
 if __name__ == "__main__":
-    raw_configs = fetch_and_parse()
-    final_configs = rename_configs(raw_configs)
-    save_to_file(final_configs)
+    raw = fetch_and_parse()
+    final = process_configs(raw)
+    save_to_file(final)
