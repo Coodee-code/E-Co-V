@@ -1,5 +1,5 @@
 #profile-title: base64:RS1Db25maWcgVklQ
-#subscription-userinfo: upload=0; download=0; total=10737418240000000; expire=0
+#subscription-userinfo: upload=0; download=0; total=10737418240000000; expire=30
 #profile-update-interval: 1
 #support-url: https://github.com/username/repo
 #profile-web-page-url: https://github.com/username/repo
