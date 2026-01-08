@@ -2,95 +2,130 @@ import requests
 import base64
 import re
 import os
+import json
 
-# اسم فایلی که لینک‌ها توشه
 SOURCE_FILE = 'sources.txt'
-# اسم فایلی که خروجی توش ذخیره میشه
 OUTPUT_FILE = 'sub.txt'
+OUTPUT_B64 = 'sub_b64.txt'
 
-def decode_base64(text):
-    # سعی میکنه متن رو دیکد کنه، اگه نشد خود متن رو برمیگردونه
-    try:
-        # اضافه کردن پدینگ در صورت نیاز
-        padding = len(text) % 4
-        if padding > 0:
-            text += '=' * (4 - padding)
-        return base64.b64decode(text).decode('utf-8', errors='ignore')
-    except:
+# هدر برای اینکه گیت‌هاب مسدود نکنه
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
+def robust_decode(text):
+    """
+    تلاش سنگین برای دیکد کردن Base64 حتی اگر خراب باشه
+    """
+    if not text: return ""
+    text = text.strip()
+    
+    # اگر متن خودش کانفیگ خام هست، دست نزن
+    if text.startswith('vless://') or text.startswith('vmess://') or text.startswith('trojan://'):
         return text
 
-def get_configs():
+    # تلاش برای دیکد
+    try:
+        # اضافه کردن پدینگ تا جایی که ضریب 4 بشه
+        missing_padding = len(text) % 4
+        if missing_padding:
+            text += '=' * (4 - missing_padding)
+        
+        decoded_bytes = base64.b64decode(text, validate=False)
+        return decoded_bytes.decode('utf-8', errors='ignore')
+    except:
+        return text # اگه نشد، خود متن رو برگردون شاید خام باشه
+
+def fetch_and_parse():
     if not os.path.exists(SOURCE_FILE):
-        print("فایل sources.txt پیدا نشد!")
+        print("❌ فایل sources.txt پیدا نشد!")
         return []
 
     with open(SOURCE_FILE, 'r') as f:
-        urls = f.read().splitlines()
+        urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
-    all_configs = []
-    
-    print(f"--- شروع جمع‌آوری از {len(urls)} منبع ---")
+    collected_configs = []
+    print(f"🔥 شروع استخراج از {len(urls)} منبع...")
 
     for url in urls:
-        if not url.strip() or url.startswith('#'): continue
         try:
-            print(f"در حال دریافت: {url}")
-            resp = requests.get(url.strip(), timeout=10)
-            content = resp.text.strip()
+            print(f"⚡ در حال دریافت: {url}")
+            response = requests.get(url, headers=HEADERS, timeout=15)
+            content = response.text.strip()
             
-            # اگه محتوا Base64 بود اول بازش میکنیم
-            if "vmess://" not in content and "vless://" not in content:
-                 content = decode_base64(content)
+            # مرحله 1: دیکد اولیه
+            decoded_content = robust_decode(content)
+            
+            # مرحله 2: پیدا کردن کانفیگ‌ها با Regex
+            # این الگو تمام پروتکل‌ها رو میکشه بیرون
+            found = re.findall(r'(vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*', decoded_content)
+            
+            # اگر با دیکد چیزی پیدا نشد، شاید فایل خام بوده، روی خود کانتنت اصلی تست میکنیم
+            if not found:
+                found = re.findall(r'(vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*', content)
 
-            # پیدا کردن کانفیگ‌ها با Regex
-            # این الگو پروتکل‌های رایج رو پیدا میکنه
-            configs = re.findall(r'(vmess|vless|trojan|ss|ssr)://[a-zA-Z0-9\-_@.:?=&%#]*', content)
-            
-            for conf in configs:
-                all_configs.append(conf)
-                
+            if found:
+                collected_configs.extend(found)
+                print(f"   ✅ {len(found)} کانفیگ پیدا شد.")
+            else:
+                print("   ⚠️ کانفیگی در این لینک پیدا نشد (شاید فرمت ناشناخته).")
+
         except Exception as e:
-            print(f"خطا در لینک {url}: {e}")
+            print(f"   ❌ خطا: {e}")
 
-    return list(set(all_configs)) # حذف تکراری‌ها
+    # حذف تکراری‌ها
+    return list(set(collected_configs))
 
-def rename_and_save(configs):
-    final_list = []
+def rename_configs(configs):
+    renamed_list = []
     counter = 1
     
     for conf in configs:
         try:
-            # جدا کردن پروتکل و بقیه ماجرا
+            # تشخیص پروتکل
             protocol = conf.split("://")[0]
-            rest = conf.split("://")[1]
+            body = conf.split("://")[1]
             
-            new_conf = ""
+            new_conf = conf # پیش‌فرض
+            new_name = f"E-Config-{counter}"
+
+            if protocol in ['vless', 'trojan', 'ss']:
+                # برای این پروتکل‌ها، هر چی بعد از # هست رو پاک میکنیم و اسم جدید میذاریم
+                if '#' in body:
+                    clean_body = body.split('#')[0]
+                    new_conf = f"{protocol}://{clean_body}#{new_name}"
+                else:
+                    new_conf = f"{conf}#{new_name}"
             
-            # تغییر نام برای Vless / Trojan / SS
-            if '#' in rest:
-                # حذف اسم قبلی و گذاشتن اسم جدید
-                base_part = rest.split('#')[0]
-                new_conf = f"{protocol}://{base_part}#E-Config-{counter}"
-            else:
-                # اگه اسم نداشت، اسم رو اضافه کن
-                new_conf = f"{protocol}://{rest}#E-Config-{counter}"
+            # نکته: vmess رو تغییر نمیدیم چون ساختار JSON داره و ممکنه خراب شه
+            # مگر اینکه بخوایم دیکد و انکد کنیم که پیچیده‌ست.
             
-            final_list.append(new_conf)
+            renamed_list.append(new_conf)
             counter += 1
         except:
-            continue
+            renamed_list.append(conf)
 
-    # ذخیره به صورت متن ساده (خط به خط)
+    return renamed_list
+
+def save_to_file(configs):
+    if not configs:
+        print("❌ هیچ کانفیگی جمع نشد!")
+        return
+
+    # ذخیره فایل متنی
+    final_text = '\n'.join(configs)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(final_list))
-    
-    # اگه میخوای خروجی Base64 هم داشته باشی (برای ایمپورت راحت‌تر)
-    with open('sub_b64.txt', 'w', encoding='utf-8') as f:
-        encoded = base64.b64encode('\n'.join(final_list).encode('utf-8')).decode('utf-8')
-        f.write(encoded)
+        f.write(final_text)
 
-    print(f"--- تمام! {len(final_list)} کانفیگ با نام E-Config ذخیره شد ---")
+    # ذخیره فایل Base64 (برای ایمپورت راحت‌تر)
+    encoded_b64 = base64.b64encode(final_text.encode('utf-8')).decode('utf-8')
+    with open(OUTPUT_B64, 'w', encoding='utf-8') as f:
+        f.write(encoded_b64)
+
+    print(f"\n🎉 تمام! {len(configs)} کانفیگ جمع‌آوری و ذخیره شد.")
+    print(f"📂 فایل‌ها: {OUTPUT_FILE} و {OUTPUT_B64}")
 
 if __name__ == "__main__":
-    configs = get_configs()
-    rename_and_save(configs)
+    raw_configs = fetch_and_parse()
+    final_configs = rename_configs(raw_configs)
+    save_to_file(final_configs)
